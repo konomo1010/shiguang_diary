@@ -19,10 +19,48 @@ export const fmtDate = (dateStr) => `${dateStr} · ${weekdayOf(dateStr)}`
 
 export const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
 
-export const countWords = (s) => (s || "").replace(/\s/g, "").length
+/* ================= Tiptap JSON helpers ================= */
+
+// A Tiptap/ProseMirror document is `{ type: "doc", content: [...] }`.
+// Every text node carries a `text` field; nodes may nest via `content`.
+export function docToText(doc) {
+  if (!doc) return ""
+  if (typeof doc === "string") return doc
+  const parts = []
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return
+    if (typeof node.text === "string") { parts.push(node.text); return }
+    if (Array.isArray(node.content)) node.content.forEach(walk)
+  }
+  return parts.join("\n")
+}
+
+// Convert legacy plain-text content (paragraphs separated by blank lines)
+// into a minimal Tiptap JSON document.
+export function textToDoc(text) {
+  const s = String(text == null ? "" : text).replace(/\r\n?/g, "\n")
+  const paragraphs = s.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+  if (!paragraphs.length) return { type: "doc", content: [{ type: "paragraph" }] }
+  return {
+    type: "doc",
+    content: paragraphs.map((p) => ({
+      type: "paragraph",
+      content: p.split("\n").map((line) => ({ type: "text", text: line }))
+    }))
+  }
+}
+
+// Ensure a stored value is a Tiptap JSON doc (migrates legacy strings).
+export function normalizeContent(content) {
+  if (content && typeof content === "object" && content.type === "doc") return content
+  if (typeof content === "string") return textToDoc(content)
+  return { type: "doc", content: [{ type: "paragraph" }] }
+}
+
+export const countWords = (s) => docToText(s).replace(/\s/g, "").length
 
 export const excerpt = (content, len = 40) => {
-  const clean = (content || "").replace(/\s+/g, " ").trim()
+  const clean = docToText(content).replace(/\s+/g, " ").trim()
   return clean.length > len ? clean.slice(0, len) + "…" : clean
 }
 

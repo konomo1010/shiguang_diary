@@ -1,6 +1,6 @@
 import { reactive, ref } from 'vue'
 import { SEED_DIARIES, SEED_TAGS } from './data/seed'
-import { todayStr } from './utils/helpers'
+import { todayStr, normalizeContent, docToText } from './utils/helpers'
 
 const STORE_KEY = 'shiguang-diary-v1'
 const DRAFT_KEY = STORE_KEY + '-draft'
@@ -8,7 +8,7 @@ const DEFAULT_SETTINGS = { theme: 'light', fontSize: 16, autosave: true, reminde
 const DEFAULT_USER = { name: '拾光用户', avatar: '' }
 
 const state = reactive({
-  diaries: SEED_DIARIES.map((d, i) => ({ id: i + 1, ...d })),
+  diaries: SEED_DIARIES.map((d, i) => ({ id: i + 1, ...d, content: normalizeContent(d.content) })),
   tags: [...SEED_TAGS],
   settings: { ...DEFAULT_SETTINGS },
   user: { ...DEFAULT_USER },
@@ -59,7 +59,7 @@ function load() {
     const raw = localStorage.getItem(STORE_KEY)
     if (raw) {
       const saved = JSON.parse(raw)
-      state.diaries = saved.diaries || state.diaries
+      state.diaries = (saved.diaries || state.diaries).map((d) => ({ ...d, content: normalizeContent(d.content) }))
       state.tags = saved.tags || state.tags
       Object.assign(state.settings, DEFAULT_SETTINGS, saved.settings)
       Object.assign(state.user, DEFAULT_USER, saved.user)
@@ -123,7 +123,7 @@ function userAvatarChar() {
 }
 
 function countWords(s) {
-  return (s || '').replace(/\s/g, '').length
+  return docToText(s).replace(/\s/g, '').length
 }
 
 /* ================= Navigation ================= */

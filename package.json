@@ -9,7 +9,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@milkdown/crepe": "^7.23.0",
+    "@floating-ui/dom": "^1.6.13",
+    "@tiptap/core": "3.32.2",
+    "@tiptap/extension-color": "3.32.2",
+    "@tiptap/extension-highlight": "3.32.2",
+    "@tiptap/extension-image": "3.32.2",
+    "@tiptap/extension-list": "3.32.2",
+    "@tiptap/extension-subscript": "3.32.2",
+    "@tiptap/extension-superscript": "3.32.2",
+    "@tiptap/extension-text-align": "3.32.2",
+    "@tiptap/extension-text-style": "3.32.2",
+    "@tiptap/extensions": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "@tiptap/starter-kit": "3.32.2",
+    "@tiptap/vue-3": "3.32.2",
     "vue": "^3.5.13"
   },
   "devDependencies": {

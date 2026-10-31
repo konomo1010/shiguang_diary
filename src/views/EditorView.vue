@@ -1,15 +1,15 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { state, saveDiary, deleteDiary, backFromEditor, toggleTag, openTagModal, saveDraft, loadDraft } from '../store'
-import { todayStr, fmtDate, countWords } from '../utils/helpers'
+import { todayStr, fmtDate, countWords, normalizeContent } from '../utils/helpers'
 import Icon from '../components/Icon.vue'
-import CrepeEditor from '../components/CrepeEditor.vue'
+import TiptapEditor from '../components/TiptapEditor.vue'
 
 const isNew = computed(() => state.editingId == null)
 const currentDiary = computed(() => isNew.value ? null : state.diaries.find((x) => x.id === state.editingId))
 
 const title = ref('')
-const content = ref('')
+const content = ref(null)
 const titleInputEl = ref(null)
 
 const autosaveState = ref('')
@@ -23,9 +23,9 @@ function initEditor() {
   } else {
     title.value = ''
   }
-  content.value = isNew.value
-    ? (draft ? (draft.content || '') : '')
-    : (currentDiary.value ? (currentDiary.value.content || '') : '')
+  content.value = normalizeContent(isNew.value
+    ? (draft ? draft.content : null)
+    : (currentDiary.value ? currentDiary.value.content : null))
   autosaveState.value = isNew.value
     ? (state.settings.autosave ? '自动保存草稿中…' : '新建日记')
     : ('编辑 · ' + (currentDiary.value ? currentDiary.value.date : ''))
@@ -49,7 +49,7 @@ watch([title, content], scheduleAutosave)
 watch(() => [...state.activeTags], scheduleAutosave)
 
 function onSave() {
-  const result = saveDiary(state.hasTitle ? title.value.trim() : '', content.value.trim())
+  const result = saveDiary(state.hasTitle ? title.value.trim() : '', content.value)
   if (result === 'title' && titleInputEl.value) titleInputEl.value.focus()
 }
 
@@ -97,7 +97,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <CrepeEditor v-model="content" placeholder="日记内容编写..." :autofocus="isNew && !state.hasTitle" />
+      <TiptapEditor v-model="content" placeholder="日记内容编写…" :autofocus="isNew && !state.hasTitle" />
 
       <div class="editor-foot">
         <span class="word-count">{{ wordCount }} 字</span>

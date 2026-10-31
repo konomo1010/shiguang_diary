@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { state, newDiary, editDiary, filterByTag, clearTagFilter, clearFilters, computeStats } from '../store'
-import { fmtDate, excerpt } from '../utils/helpers'
+import { fmtDate, excerpt, docToText } from '../utils/helpers'
 import Icon from '../components/Icon.vue'
 
 const q = computed(() => state.search.trim().toLowerCase())
@@ -12,7 +12,7 @@ const list = computed(() => {
   if (q.value) {
     l = l.filter((d) =>
       d.title.toLowerCase().includes(q.value) ||
-      (d.content || '').toLowerCase().includes(q.value) ||
+      docToText(d.content).toLowerCase().includes(q.value) ||
       (d.tags || []).join(' ').toLowerCase().includes(q.value)
     )
   }
