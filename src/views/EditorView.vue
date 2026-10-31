@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { state, saveDiary, deleteDiary, backFromEditor, toggleTag, openTagModal } from '../store'
+import { state, saveDiary, deleteDiary, backFromEditor, toggleTag, openTagModal, editorDark } from '../store'
+import * as dbApi from '../api'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { todayStr, fmtDate, countWords, normalizeContent, toDateStr } from '../utils/helpers'
 import Icon from '../components/Icon.vue'
 import NotionLikeEditor from '../components/NotionLikeEditor.vue'
@@ -12,7 +14,21 @@ const title = ref('')
 const content = ref(null)
 const titleInputEl = ref(null)
 
-function initEditor() {
+function resolveImageSrc(doc) {
+  const walk = (node) => {
+    if (node && node.type === 'image' && node.attrs && node.attrs.src) {
+      const src = node.attrs.src
+      if (typeof src === 'string' && !src.startsWith('blob:') && !src.startsWith('http') && !src.startsWith('asset:') && !src.startsWith('data:')) {
+        node.attrs.src = convertFileSrc(src)
+      }
+    }
+    if (node && Array.isArray(node.content)) node.content.forEach(walk)
+  }
+  if (doc) walk(doc)
+  return doc
+}
+
+async function initEditor() {
   if (state.hasTitle) {
     title.value = isNew.value
       ? ''
@@ -20,11 +36,14 @@ function initEditor() {
   } else {
     title.value = ''
   }
-  content.value = normalizeContent(isNew.value
-    ? null
-    : (currentDiary.value ? currentDiary.value.content : null))
+  if (isNew.value) {
+    content.value = null
+  } else {
+    const id = currentDiary.value ? currentDiary.value.id : null
+    const body = id != null ? await dbApi.getBody(id) : null
+    content.value = normalizeContent(resolveImageSrc(body))
+  }
 }
-initEditor()
 
 const wordCount = computed(() => countWords(content.value))
 
@@ -148,7 +167,8 @@ function onToggleTitle() {
   if (state.hasTitle && titleInputEl.value) titleInputEl.value.focus()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await initEditor()
   if (isNew.value && state.hasTitle && titleInputEl.value) titleInputEl.value.focus()
   document.addEventListener('click', onDocClick)
 })
@@ -159,7 +179,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="view">
+  <section class="view editor-view">
+    <div class="editor-topbar">
+      <button class="btn btn-icon btn-ghost" title="返回" @click="backFromEditor"><Icon name="back" /></button>
+      <div class="spacer"></div>
+      <button v-if="!isNew" class="btn btn-danger-ghost" @click="deleteDiary(currentDiary.id)"><Icon name="trash" /> 删除</button>
+      <button class="btn btn-primary" @click="onSave">保存日记</button>
+    </div>
+
     <div class="card editor-card editor-card-title">
       <input v-if="state.hasTitle" ref="titleInputEl" v-model="title" class="title-input" type="text" placeholder="给今天起个标题…" maxlength="60">
 
@@ -238,11 +265,6 @@ onBeforeUnmount(() => {
           <button type="button" class="tag-add-btn" @click="openTagModal"><Icon name="plus" /> 添加标签</button>
           <span v-if="!state.hasTitle && !state.activeTags.length" class="tag-req">必选</span>
         </div>
-        <div class="editor-meta-actions">
-          <button class="btn btn-icon btn-ghost" title="返回" @click="backFromEditor"><Icon name="back" /></button>
-          <button v-if="!isNew" class="btn btn-danger-ghost" @click="deleteDiary(currentDiary.id)"><Icon name="trash" /> 删除</button>
-          <button class="btn btn-primary" @click="onSave">保存日记</button>
-        </div>
       </div>
 
       <div v-if="state.activeTags.length" class="meta-tags">
@@ -252,10 +274,14 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="card editor-card editor-card-body">
+    <div class="card editor-card editor-card-body" :class="{ 'editor-card-body--dark': editorDark }">
       <NotionLikeEditor v-model="content" :autofocus="isNew && !state.hasTitle" />
 
-      <div class="editor-foot">
+      <div
+        class="editor-foot"
+        :class="{ 'editor-foot--dark': editorDark }"
+        :style="editorDark ? { background: '#0e0e11', color: 'rgba(245,245,245,0.65)' } : {}"
+      >
         <span class="word-count">{{ wordCount }} 字</span>
         <span class="word-count">{{ isNew ? '新建日记' : '编辑日记' }}</span>
       </div>

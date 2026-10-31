@@ -5,7 +5,7 @@ import {
   calPickerDecade, calPickerSelectYear, calPickerYearStep, calPickerSelectMonth,
   calSelect, newDiary, editDiary
 } from '../store'
-import { greeting, fmtDate, todayStr, toDateStr, excerpt } from '../utils/helpers'
+import { greeting, fmtDate, todayStr, toDateStr } from '../utils/helpers'
 import Icon from '../components/Icon.vue'
 
 if (!state.calSelected) state.calSelected = todayStr()
@@ -143,7 +143,7 @@ const decadeYears = computed(() => Array.from({ length: 12 }, (_, i) => state.ca
     <div v-if="selectedEntries.length" class="day-list">
       <button v-for="d in selectedEntries" :key="d.id" class="day-entry" @click="editDiary(d.id)">
         <span v-if="d.title && d.title.trim()" class="day-entry-title">{{ d.title }}</span>
-        <span v-if="state.settings.showListExcerpt" class="day-entry-excerpt">{{ excerpt(d.content, 80) }}</span>
+        <span v-if="state.settings.showListExcerpt && d.excerpt" class="day-entry-excerpt">{{ d.excerpt }}</span>
         <span class="day-entry-meta">
           <span v-for="t in (d.tags || [])" :key="t" class="tag-pill">{{ t }}</span>
           <span v-if="!(d.tags || []).length" class="faint">未加标签</span>

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { state, showView, userAvatarChar, sidebarCollapsed, toggleSidebar } from '../store'
+import { state, showView, userAvatarChar, sidebarCollapsed } from '../store'
 import { NAV_ITEMS } from '../utils/icons'
 import Icon from './Icon.vue'
 
@@ -23,16 +23,18 @@ function readWidth() {
 const width = ref(readWidth())
 
 /* ---- drag to resize ---- */
+const COLLAPSE_THRESHOLD = 120
+const COLLAPSED_KEY = 'shiguang-sidebar-collapsed'
+
 let dragging = false
 let startX = 0
 let startW = 0
 
 function onResizeStart(e) {
-  if (sidebarCollapsed.value) return
   e.preventDefault()
   dragging = true
   startX = e.clientX
-  startW = width.value
+  startW = sidebarCollapsed.value ? COLLAPSED_W : width.value
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup', onResizeEnd)
   document.body.style.cursor = 'col-resize'
@@ -41,7 +43,19 @@ function onResizeStart(e) {
 
 function onResizeMove(e) {
   if (!dragging) return
-  width.value = Math.min(MAX_W, Math.max(MIN_W, startW + (e.clientX - startX)))
+  const raw = startW + (e.clientX - startX)
+  if (sidebarCollapsed.value) {
+    // 收起状态：向右拖超过阈值就展开
+    if (raw > COLLAPSE_THRESHOLD) {
+      sidebarCollapsed.value = false
+      width.value = Math.min(MAX_W, Math.max(MIN_W, raw))
+    }
+  } else if (raw < COLLAPSE_THRESHOLD) {
+    // 展开状态：拖到很窄就自动收起
+    sidebarCollapsed.value = true
+  } else {
+    width.value = Math.min(MAX_W, Math.max(MIN_W, raw))
+  }
 }
 
 function onResizeEnd() {
@@ -50,7 +64,10 @@ function onResizeEnd() {
   window.removeEventListener('mouseup', onResizeEnd)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
-  try { localStorage.setItem(WIDTH_KEY, String(width.value)) } catch (e) { /* ignore */ }
+  try {
+    localStorage.setItem(WIDTH_KEY, String(width.value))
+    localStorage.setItem(COLLAPSED_KEY, String(sidebarCollapsed.value))
+  } catch (e) { /* ignore */ }
 }
 
 onBeforeUnmount(() => {
@@ -65,14 +82,6 @@ const sidebarStyle = computed(() => ({
 
 <template>
   <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }" :style="sidebarStyle">
-    <button
-      type="button"
-      class="sidebar-collapse-btn"
-      :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
-      @click="toggleSidebar"
-    >
-      <Icon :name="sidebarCollapsed ? 'chevRight' : 'chevLeft'" />
-    </button>
     <nav class="nav">
       <button
         v-for="n in NAV_ITEMS"
@@ -99,9 +108,8 @@ const sidebarStyle = computed(() => ({
       </div>
     </div>
     <div
-      v-if="!sidebarCollapsed"
       class="sidebar-resizer"
-      title="拖动调整宽度"
+      title="拖动调整宽度（拖到最窄自动收起）"
       @mousedown="onResizeStart"
     ></div>
   </aside>

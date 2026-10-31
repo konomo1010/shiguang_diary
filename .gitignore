@@ -2,3 +2,14 @@ node_modules
 *.log
 dist
 .codeartsdoer
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+
+# 本地数据（换到项目目录后的数据/缓存）
+data
+webview2-data
+test-data
+src-tauri/data
+src-tauri/webview2-data

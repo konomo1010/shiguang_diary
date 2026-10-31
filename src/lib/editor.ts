@@ -90,7 +90,9 @@ export function insertImageFiles(
 
   if (content.length === 0) return false
 
-  editor.chain().focus().insertContent(content).run()
+  // 图片后追加一个空段落，光标落在段落里，避免进入 caption 导致后续粘贴/回车异常
+  const nodes = [...content, { type: 'paragraph' }]
+  editor.chain().focus().insertContent(nodes).run()
   return true
 }
 

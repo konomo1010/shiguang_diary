@@ -1,4 +1,5 @@
 <script setup>
+import { ref } from 'vue'
 import { state, init } from './store'
 import Sidebar from './components/Sidebar.vue'
 import Modal from './components/Modal.vue'
@@ -10,11 +11,14 @@ import EditorView from './views/EditorView.vue'
 import TagsView from './views/TagsView.vue'
 import SettingsView from './views/SettingsView.vue'
 
+const ready = ref(false)
 init()
+  .catch((e) => { console.error('[app] init failed', e) })
+  .finally(() => { ready.value = true })
 </script>
 
 <template>
-  <div class="app">
+  <div v-if="ready" class="app">
     <Sidebar />
     <main class="main">
       <HomeView v-if="state.view === 'home'" />

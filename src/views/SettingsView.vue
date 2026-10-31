@@ -1,11 +1,13 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
-  state, userAvatarChar,
+  state, userAvatarChar, load,
   setTheme, setShowListExcerpt,
   setUserName, setUserAvatar, exportData, importData
 } from '../store'
+import * as dbApi from '../api'
 import Icon from '../components/Icon.vue'
+import { open } from '@tauri-apps/plugin-dialog'
 
 // 数据导入 / 导出
 
@@ -29,6 +31,44 @@ function pickAvatarImage() {
     input.remove()
   }
   input.click()
+}
+
+// 数据目录配置
+const dataDir = ref('')
+const dataDirSaved = ref(false)
+
+onMounted(async () => {
+  try {
+    dataDir.value = await dbApi.getDataDir()
+  } catch (e) {
+    console.error('[settings] get data dir failed', e)
+  }
+})
+
+async function applyDataDir(path) {
+  try {
+    const newRoot = await dbApi.setDataDir(path)
+    await load()  // 迁移后立即从新目录重新加载数据
+    dataDir.value = newRoot || '(默认：运行目录/data)'
+    dataDirSaved.value = true
+    setTimeout(() => { dataDirSaved.value = false }, 3000)
+  } catch (e) {
+    console.error('[settings] set data dir failed', e)
+  }
+}
+
+async function pickDataDir() {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: '选择数据目录',
+  })
+  if (!selected) return
+  await applyDataDir(selected)
+}
+
+function resetDataDir() {
+  applyDataDir('')
 }
 </script>
 
@@ -85,7 +125,18 @@ function pickAvatarImage() {
 
     <div class="settings-group">
       <h3>数据</h3>
-      <p class="desc">导入或导出你的日记数据（保存在本机浏览器中）。</p>
+      <p class="desc">数据目录、导入与导出。</p>
+      <div class="setting-row">
+        <div class="info">
+          <b>数据目录</b>
+          <span>当前：{{ dataDir }}。选择新目录后数据会自动迁移。</span>
+        </div>
+        <div class="data-dir-config">
+          <button type="button" class="btn btn-ghost" @click="pickDataDir"><Icon name="folder" /> 选择目录</button>
+          <button type="button" class="btn-link" @click="resetDataDir">恢复默认</button>
+          <span v-if="dataDirSaved" class="saved-tip">已迁移</span>
+        </div>
+      </div>
       <div class="setting-row">
         <div class="info"><b>导出数据</b><span>下载全部日记为 JSON 文件</span></div>
         <button class="btn btn-ghost" @click="exportData"><Icon name="download" /> 导出</button>

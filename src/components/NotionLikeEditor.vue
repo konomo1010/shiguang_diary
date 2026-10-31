@@ -11,6 +11,7 @@ import {
 } from '../lib/editor'
 import { provideEditor } from '../composables/useEditor'
 import { tocPosition } from '../composables/useLayout'
+import { editorDark, toggleEditorDark } from '../store'
 
 const props = defineProps<{
   modelValue?: object | string | null
@@ -20,13 +21,9 @@ const emit = defineEmits<{ 'update:modelValue': [object] }>()
 
 const tocSide = computed(() => tocPosition.value)
 
-// Editor-local dark mode: only affects the editor surface, never the app theme.
-// Default to the current global theme so the editor matches on first open.
-const editorDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
+// Editor-local dark mode state lives in the store so the editor footer can follow it too.
 provide('editorDark', editorDark)
-provide('toggleEditorDark', () => {
-  editorDark.value = !editorDark.value
-})
+provide('toggleEditorDark', toggleEditorDark)
 
 const editorRef = shallowRef<Editor | null>(null)
 

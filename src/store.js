@@ -1,13 +1,13 @@
 import { reactive, ref } from 'vue'
+import * as dbApi from './api'
 import { SEED_DIARIES, SEED_TAGS } from './data/seed'
 import { todayStr, normalizeContent, docToText } from './utils/helpers'
 
-const STORE_KEY = 'shiguang-diary-v1'
 const DEFAULT_SETTINGS = { theme: 'light', fontSize: 16, showListExcerpt: true }
 const DEFAULT_USER = { name: '拾光用户', avatar: '' }
 
 const state = reactive({
-  diaries: SEED_DIARIES.map((d, i) => ({ id: i + 1, ...d, content: normalizeContent(d.content) })),
+  diaries: [],
   tags: [...SEED_TAGS],
   settings: { ...DEFAULT_SETTINGS },
   user: { ...DEFAULT_USER },
@@ -48,26 +48,129 @@ const tagModal = reactive({ open: false, search: '' })
 const toasts = reactive([])
 let toastId = 0
 
-/* ================= Persistence ================= */
-function load() {
-  try {
-    const raw = localStorage.getItem(STORE_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw)
-      state.diaries = (saved.diaries || state.diaries).map((d) => ({ ...d, content: normalizeContent(d.content) }))
-      state.tags = saved.tags || state.tags
-      Object.assign(state.settings, DEFAULT_SETTINGS, saved.settings)
-      Object.assign(state.user, DEFAULT_USER, saved.user)
+/* ================= Persistence (redb via Tauri commands) ================= */
+let persistChain = Promise.resolve()
+
+function buildExcerpt(content) {
+  return docToText(content).replace(/\s/g, ' ').trim().slice(0, 80)
+}
+
+async function blobToHash(buf) {
+  const hash = await crypto.subtle.digest('SHA-256', buf)
+  const arr = Array.from(new Uint8Array(hash))
+  return arr.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16)
+}
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+async function collectImages(content) {
+  const images = []
+  const keepImages = []
+  const clone = JSON.parse(JSON.stringify(content ?? null))
+  const blobNodes = []
+
+  // 第一遍：还原已有图片 src 为绝对路径，收集 blob 节点
+  const walk = (node) => {
+    if (node && node.type === 'image' && node.attrs && node.attrs.src) {
+      const src = node.attrs.src
+      if (typeof src === 'string') {
+        if (src.startsWith('blob:')) {
+          blobNodes.push(node)
+        } else if (src.startsWith('http://asset.localhost') || src.startsWith('asset:')) {
+          // asset URL → 还原成磁盘绝对路径
+          const raw = src
+            .replace(/^http:\/\/asset\.localhost\//, '')
+            .replace(/^asset:\/\/localhost\//, '')
+          const abs = decodeURIComponent(raw)
+          const fname = abs.split(/[\\/]/).pop()
+          if (fname) keepImages.push(fname)
+          node.attrs.src = abs
+        } else if (!src.startsWith('http') && !src.startsWith('data:')) {
+          // 已是绝对路径
+          const fname = src.split(/[\\/]/).pop()
+          if (fname) keepImages.push(fname)
+        }
+      }
     }
-  } catch (e) { /* ignore corrupted storage */ }
+    if (node && Array.isArray(node.content)) node.content.forEach(walk)
+  }
+  walk(clone)
+
+  // 第二遍：处理新 blob 图片，按内容哈希命名，相同内容去重（本地只存一份）
+  const seen = new Set()
+  for (const node of blobNodes) {
+    const src = node.attrs.src
+    try {
+      const res = await fetch(src)
+      const blob = await res.blob()
+      const buf = await blob.arrayBuffer()
+      const hash = await blobToHash(buf)
+      const base64 = await arrayBufferToBase64(buf)
+      const ext = (blob.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '') || 'png'
+      const name = `${hash}.${ext}`
+      node.attrs.src = name
+      if (!seen.has(hash)) {
+        images.push({ name, data: base64 })
+        seen.add(hash)
+      }
+    } catch (e) {
+      console.error('[store] collect image failed', e)
+    }
+  }
+
+  return { content: clone, images, keepImages }
+}
+
+async function load() {
+  try {
+    let meta = await dbApi.loadMeta()
+    if (!meta || meta.length === 0) {
+      // 首次启动：把内置示例写入 redb
+      for (const s of SEED_DIARIES) {
+        const content = normalizeContent(s.content)
+        await dbApi.saveDiary({
+          id: 0,
+          title: s.title || '',
+          date: s.date || '',
+          tags: Array.isArray(s.tags) ? s.tags : [],
+          content,
+          text: docToText(content),
+          wordCount: countWords(content),
+          excerpt: buildExcerpt(content)
+        })
+      }
+      meta = await dbApi.loadMeta()
+    }
+    state.diaries = meta || []
+
+    const config = await dbApi.loadConfig()
+    if (config) {
+      Object.assign(state.settings, DEFAULT_SETTINGS, config.settings || {})
+      Object.assign(state.user, DEFAULT_USER, config.user || {})
+      if (Array.isArray(config.tags)) state.tags = config.tags
+    }
+  } catch (e) {
+    console.error('[store] load failed', e)
+  }
+}
+
+async function writeConfig() {
+  await dbApi.saveConfig({
+    settings: state.settings,
+    user: state.user,
+    tags: state.tags
+  })
 }
 
 function persist() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({
-      diaries: state.diaries, tags: state.tags, settings: state.settings, user: state.user
-    }))
-  } catch (e) { /* storage may be unavailable */ }
+  persistChain = persistChain
+    .then(() => writeConfig())
+    .catch((e) => { console.error('[store] persist failed', e) })
 }
 
 /* ================= Derived helpers ================= */
@@ -77,7 +180,7 @@ function tagCount(name) {
 
 function computeStats() {
   const total = state.diaries.length
-  const words = state.diaries.reduce((s, d) => s + countWords(d.content) + countWords(d.title), 0)
+  const words = state.diaries.reduce((s, d) => s + (d.wordCount || 0), 0)
   const dates = state.diaries.map((d) => d.date).sort()
   const activeDays = new Set(dates).size
   return {
@@ -137,18 +240,52 @@ function saveDiary(title, content) {
     return 'tags'
   }
 
-  if (state.editingId == null) {
-    const id = Math.max(0, ...state.diaries.map((d) => d.id)) + 1
-    state.diaries.push({ id, title, content, date: state.newDiaryDate || todayStr(), tags: [...state.activeTags] })
-    toast('日记已保存', 'success')
-  } else {
-    const d = state.diaries.find((x) => x.id === state.editingId)
-    if (d) { d.title = title; d.content = content; d.tags = [...state.activeTags] }
-    toast('修改已保存', 'success')
-  }
-  state.newDiaryDate = null
-  persist()
-  showView('diary')
+  const editingId = state.editingId
+  const existing = editingId == null ? null : state.diaries.find((x) => x.id === editingId)
+  const date = state.newDiaryDate || (existing ? existing.date : todayStr())
+  const tags = [...state.activeTags]
+  const wordCount = countWords(content)
+  const excerpt = buildExcerpt(content)
+
+  collectImages(content).then(({ content: resolvedContent, images, keepImages }) => {
+    return dbApi.saveDiary({
+      id: editingId == null ? 0 : editingId,
+      title,
+      date,
+      tags,
+      content: resolvedContent,
+      text: docToText(resolvedContent),
+      wordCount,
+      excerpt,
+      images,
+      keepImages
+    })
+  }).then((result) => {
+    const newId = Array.isArray(result) ? result[0] : result
+    const dirName = Array.isArray(result) ? result[1] : ''
+    if (editingId == null) {
+      state.diaries.push({ id: newId, title, date, tags, wordCount, excerpt, dirName })
+      toast('日记已保存', 'success')
+    } else {
+      const d = state.diaries.find((x) => x.id === editingId)
+      if (d) {
+        d.title = title
+        d.date = date
+        d.tags = tags
+        d.wordCount = wordCount
+        d.excerpt = excerpt
+        if (dirName) d.dirName = dirName
+      }
+      toast('修改已保存', 'success')
+    }
+    state.newDiaryDate = null
+    persist()
+    showView('diary')
+  }).catch((e) => {
+    console.error('[store] saveDiary failed', e)
+    toast('保存失败，请重试', 'danger')
+  })
+
   return null
 }
 
@@ -161,10 +298,15 @@ function deleteDiary(id) {
     confirmText: '删除',
     danger: true,
     onConfirm: () => {
-      state.diaries = state.diaries.filter((x) => x.id !== id)
-      persist()
-      toast('日记已删除', 'success')
-      showView('diary')
+      dbApi.deleteDiary(id).then(() => {
+        state.diaries = state.diaries.filter((x) => x.id !== id)
+        persist()
+        toast('日记已删除', 'success')
+        showView('diary')
+      }).catch((e) => {
+        console.error('[store] deleteDiary failed', e)
+        toast('删除失败，请重试', 'danger')
+      })
     }
   })
 }
@@ -340,25 +482,10 @@ function filterByTag(tag) {
   showView('diary')
 }
 
-function clearTagFilter() {
-  state.tagFilter = null
-}
-
-function clearFilters() {
-  state.search = ''
-  state.tagFilter = null
-}
-
 /* ================= Settings ================= */
 function setTheme(t) {
   state.settings.theme = t
   applyTheme()
-  persist()
-}
-
-function setFontSize(v) {
-  state.settings.fontSize = Number(v)
-  document.documentElement.style.fontSize = state.settings.fontSize + 'px'
   persist()
 }
 
@@ -370,6 +497,12 @@ function setShowListExcerpt(v) {
 
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', state.settings.theme)
+}
+
+/* ================= Editor dark mode (editor-local, independent of app theme) ================= */
+const editorDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
+function toggleEditorDark() {
+  editorDark.value = !editorDark.value
 }
 
 function setUserName(v) {
@@ -384,10 +517,20 @@ function setUserAvatar(v) {
   persist()
 }
 
-function exportData() {
-  const blob = new Blob([JSON.stringify({ diaries: state.diaries, tags: state.tags }, null, 2)], { type: 'application/json' })
-  downloadBlob(blob, `拾光日记-${todayStr()}.json`)
-  toast('数据已导出', 'success')
+async function exportData() {
+  try {
+    const diaries = []
+    for (const m of state.diaries) {
+      const body = await dbApi.getBody(m.id)
+      diaries.push({ ...m, content: body })
+    }
+    const blob = new Blob([JSON.stringify({ diaries, tags: state.tags }, null, 2)], { type: 'application/json' })
+    downloadBlob(blob, `拾光日记-${todayStr()}.json`)
+    toast('数据已导出', 'success')
+  } catch (e) {
+    console.error('[store] exportData failed', e)
+    toast('导出失败', 'danger')
+  }
 }
 
 function importData() {
@@ -398,17 +541,32 @@ function importData() {
     const file = input.files && input.files[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result)
         const diaries = Array.isArray(data)
           ? data
           : (data && Array.isArray(data.diaries) ? data.diaries : null)
         if (!diaries) throw new Error('no diaries')
-        state.diaries = diaries.map((d) => ({ ...d, content: normalizeContent(d.content) }))
-        if (data && !Array.isArray(data) && Array.isArray(data.tags)) state.tags = data.tags
-        persist()
-        toast(`已导入 ${state.diaries.length} 篇日记`, 'success')
+        for (const d of diaries) {
+          const content = normalizeContent(d.content)
+          await dbApi.saveDiary({
+            id: 0,
+            title: d.title || '',
+            date: d.date || todayStr(),
+            tags: Array.isArray(d.tags) ? d.tags : [],
+            content,
+            text: docToText(content),
+            wordCount: countWords(content),
+            excerpt: buildExcerpt(content)
+          })
+        }
+        state.diaries = await dbApi.loadMeta()
+        if (data && !Array.isArray(data) && Array.isArray(data.tags)) {
+          state.tags = data.tags
+          persist()
+        }
+        toast(`已导入 ${diaries.length} 篇日记`, 'success')
         showView('diary')
       } catch (e) {
         toast('数据导入失败：文件格式不正确', 'danger')
@@ -466,8 +624,8 @@ function toast(msg, type = '') {
 }
 
 /* ================= Init ================= */
-function init() {
-  load()
+async function init() {
+  await load()
   applyTheme()
   document.documentElement.style.fontSize = state.settings.fontSize + 'px'
   showView('home')
@@ -479,15 +637,10 @@ const sidebarCollapsed = ref(false)
 try {
   sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
 } catch (e) { /* ignore */ }
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value)) } catch (e) { /* ignore */ }
-}
-
 export {
   state,
   calAnchor,
-  sidebarCollapsed, toggleSidebar,
+  sidebarCollapsed,
   modal,
   tagModal,
   toasts,
@@ -505,10 +658,11 @@ export {
   calShift, calGotoToday, calTogglePicker, calPickerToggleView, calPickerDecade,
   calPickerSelectYear, calPickerYearStep, calPickerSelectMonth, calSelect,
   // search / filter
-  filterByTag, clearTagFilter, clearFilters,
+  filterByTag,
   // settings
-  setTheme, setFontSize, setShowListExcerpt,
-  applyTheme, setUserName, setUserAvatar, exportData, importData,
+  setTheme, setShowListExcerpt,
+  applyTheme, editorDark, toggleEditorDark,
+  setUserName, setUserAvatar, exportData, importData,
   // modal
   openModal, closeModal, confirmModal,
   // toast

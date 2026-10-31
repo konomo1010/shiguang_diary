@@ -17,8 +17,6 @@ export const weekdayOf = (dateStr) => WEEKDAYS[new Date(dateStr + "T00:00:00").g
 
 export const fmtDate = (dateStr) => `${dateStr} · ${weekdayOf(dateStr)}`
 
-export const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
-
 /* ================= Tiptap JSON helpers ================= */
 
 // A Tiptap/ProseMirror document is `{ type: "doc", content: [...] }`.
@@ -32,6 +30,7 @@ export function docToText(doc) {
     if (typeof node.text === "string") { parts.push(node.text); return }
     if (Array.isArray(node.content)) node.content.forEach(walk)
   }
+  walk(doc)
   return parts.join("\n")
 }
 
@@ -58,11 +57,6 @@ export function normalizeContent(content) {
 }
 
 export const countWords = (s) => docToText(s).replace(/\s/g, "").length
-
-export const excerpt = (content, len = 40) => {
-  const clean = docToText(content).replace(/\s+/g, " ").trim()
-  return clean.length > len ? clean.slice(0, len) + "…" : clean
-}
 
 export const greeting = () => {
   const h = new Date().getHours()

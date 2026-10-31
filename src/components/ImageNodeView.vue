@@ -56,7 +56,7 @@ onBeforeUnmount(() => {
 function selectImage() {
   const pos = props.getPos()
   if (typeof pos === 'number') {
-    props.editor.commands.setNodeSelection(pos)
+    props.editor.chain().focus().setNodeSelection(pos).run()
   }
 }
 </script>
