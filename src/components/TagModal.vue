@@ -12,7 +12,7 @@ const filteredTags = computed(() => {
 
 <template>
   <div v-if="tagModal.open" class="modal-overlay" @click.self="closeTagModal">
-    <div class="modal" style="max-width: 460px;">
+    <div class="modal tag-modal" style="max-width: 560px;">
       <h3>选择标签</h3>
       <p>点击标签进行多选，选择后自动保存。</p>
       <div class="tag-modal-search">

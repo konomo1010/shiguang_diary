@@ -3,8 +3,7 @@ import { SEED_DIARIES, SEED_TAGS } from './data/seed'
 import { todayStr, normalizeContent, docToText } from './utils/helpers'
 
 const STORE_KEY = 'shiguang-diary-v1'
-const DRAFT_KEY = STORE_KEY + '-draft'
-const DEFAULT_SETTINGS = { theme: 'light', fontSize: 16, autosave: true, reminders: false, showListExcerpt: true }
+const DEFAULT_SETTINGS = { theme: 'light', fontSize: 16, showListExcerpt: true }
 const DEFAULT_USER = { name: '拾光用户', avatar: '' }
 
 const state = reactive({
@@ -49,10 +48,6 @@ const tagModal = reactive({ open: false, search: '' })
 const toasts = reactive([])
 let toastId = 0
 
-// ----- Config directory (persisted via IndexedDB) -----
-const configDirName = ref('')
-let configDirHandle = null
-
 /* ================= Persistence ================= */
 function load() {
   try {
@@ -75,30 +70,6 @@ function persist() {
   } catch (e) { /* storage may be unavailable */ }
 }
 
-/* ================= Draft ================= */
-function saveDraft(title, content) {
-  if (!state.settings.autosave || state.editingId != null) return
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      title: title || '',
-      content: content || '',
-      tags: state.activeTags,
-      hasTitle: state.hasTitle
-    }))
-  } catch (e) { /* ignore */ }
-}
-
-function loadDraft() {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY)
-    return raw ? JSON.parse(raw) : null
-  } catch (e) { return null }
-}
-
-function clearDraft() {
-  try { localStorage.removeItem(DRAFT_KEY) } catch (e) { /* ignore */ }
-}
-
 /* ================= Derived helpers ================= */
 function tagCount(name) {
   return state.diaries.filter((d) => (d.tags || []).includes(name)).length
@@ -117,7 +88,11 @@ function computeStats() {
 }
 
 function userAvatarChar() {
-  const avatar = (state.user.avatar || '').trim().charAt(0)
+  const raw = (state.user.avatar || '').trim()
+  if (raw.startsWith('data:image/')) {
+    return (state.user.name || '拾').trim().charAt(0) || '拾'
+  }
+  const avatar = raw.charAt(0)
   if (avatar) return avatar
   return (state.user.name || '拾').trim().charAt(0) || '拾'
 }
@@ -137,9 +112,8 @@ function showView(view) {
 function newDiary(dateStr) {
   state.editingId = null
   state.newDiaryDate = dateStr || null
-  const draft = state.settings.autosave ? loadDraft() : null
-  state.activeTags = draft && draft.tags ? [...draft.tags] : []
-  state.hasTitle = draft && typeof draft.hasTitle === 'boolean' ? draft.hasTitle : true
+  state.activeTags = []
+  state.hasTitle = true
   showView('editor')
 }
 
@@ -174,7 +148,6 @@ function saveDiary(title, content) {
   }
   state.newDiaryDate = null
   persist()
-  clearDraft()
   showView('diary')
   return null
 }
@@ -389,18 +362,6 @@ function setFontSize(v) {
   persist()
 }
 
-function setAutosave(v) {
-  state.settings.autosave = v
-  persist()
-  toast(v ? '已开启自动保存' : '已关闭自动保存', 'success')
-}
-
-function setReminders(v) {
-  state.settings.reminders = v
-  persist()
-  toast(v ? '已开启每日提醒' : '已关闭每日提醒', 'success')
-}
-
 function setShowListExcerpt(v) {
   state.settings.showListExcerpt = v
   persist()
@@ -418,7 +379,8 @@ function setUserName(v) {
 }
 
 function setUserAvatar(v) {
-  state.user.avatar = (v || '').trim().charAt(0)
+  const s = (v || '').trim()
+  state.user.avatar = s.startsWith('data:image/') ? s : s.charAt(0)
   persist()
 }
 
@@ -428,135 +390,7 @@ function exportData() {
   toast('数据已导出', 'success')
 }
 
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function clearAll() {
-  openModal({
-    title: '清空所有数据？',
-    body: '将删除全部日记与标签，此操作不可恢复。',
-    confirmText: '确认清空',
-    danger: true,
-    onConfirm: () => {
-      state.diaries = []
-      state.tags = []
-      persist()
-      clearDraft()
-      toast('所有数据已清空', 'success')
-      showView('home')
-    }
-  })
-}
-
-/* ================= Config directory (File System Access + IndexedDB) ================= */
-const CONFIG_DIR_DB = 'shiguang-config-dir'
-const CONFIG_DIR_STORE = 'dir'
-
-function idbOpen() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(CONFIG_DIR_DB, 1)
-    req.onupgradeneeded = () => req.result.createObjectStore(CONFIG_DIR_STORE)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function restoreConfigDir() {
-  if (!window.indexedDB) return
-  try {
-    const db = await idbOpen()
-    const get = db.transaction(CONFIG_DIR_STORE, 'readonly').objectStore(CONFIG_DIR_STORE).get('dir')
-    const saved = await new Promise((res) => { get.onsuccess = () => res(get.result); get.onerror = () => res(null) })
-    if (saved && saved.handle) {
-      configDirHandle = saved.handle
-      configDirName.value = saved.name || (configDirHandle.name || '')
-    }
-    db.close()
-  } catch (e) { /* ignore */ }
-}
-
-async function persistConfigDir() {
-  if (!window.indexedDB) return
-  try {
-    const db = await idbOpen()
-    const tx = db.transaction(CONFIG_DIR_STORE, 'readwrite')
-    tx.objectStore(CONFIG_DIR_STORE).put({ handle: configDirHandle, name: configDirName.value }, 'dir')
-    db.close()
-  } catch (e) { /* ignore */ }
-}
-
-async function chooseConfigDir() {
-  if (!window.showDirectoryPicker) {
-    toast('当前浏览器不支持选择固定文件夹，将使用默认下载位置', '')
-    return
-  }
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite' })
-    configDirHandle = handle
-    configDirName.value = handle.name || ''
-    persistConfigDir()
-    toast('保存位置已设为「' + configDirName.value + '」', 'success')
-  } catch (e) {
-    if (e && e.name === 'AbortError') return
-  }
-}
-
-async function clearConfigDir() {
-  configDirHandle = null
-  configDirName.value = ''
-  persistConfigDir()
-  toast('已恢复为默认保存位置', 'success')
-}
-
-async function saveConfig() {
-  const config = {
-    _comment: '拾光日记 · 配置文件（diary_config.json）',
-    savedAt: new Date().toISOString(),
-    settings: state.settings
-  }
-  const json = JSON.stringify(config, null, 2)
-  const filename = 'diary_config.json'
-
-  if (configDirHandle) {
-    try {
-      const fileHandle = await configDirHandle.getFileHandle(filename, { create: true })
-      const writable = await fileHandle.createWritable()
-      await writable.write(json)
-      await writable.close()
-      toast('配置已保存到「' + configDirName.value + '」', 'success')
-      return
-    } catch (e) {
-      if (e && e.name === 'AbortError') return
-    }
-  }
-
-  if (window.showSaveFilePicker) {
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: filename,
-        types: [{ description: 'JSON 配置文件', accept: { 'application/json': ['.json'] } }]
-      })
-      const writable = await handle.createWritable()
-      await writable.write(json)
-      await writable.close()
-      toast('配置已保存到 ' + (handle.name || filename), 'success')
-      return
-    } catch (e) {
-      if (e && e.name === 'AbortError') return
-    }
-  }
-
-  downloadBlob(new Blob([json], { type: 'application/json' }), filename)
-  toast('配置已保存为 ' + filename, 'success')
-}
-
-function importConfig() {
+function importData() {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'application/json,.json'
@@ -567,20 +401,31 @@ function importConfig() {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result)
-        const s = data.settings || data
-        if (typeof s !== 'object' || s === null) throw new Error()
-        Object.assign(state.settings, DEFAULT_SETTINGS, s)
+        const diaries = Array.isArray(data)
+          ? data
+          : (data && Array.isArray(data.diaries) ? data.diaries : null)
+        if (!diaries) throw new Error('no diaries')
+        state.diaries = diaries.map((d) => ({ ...d, content: normalizeContent(d.content) }))
+        if (data && !Array.isArray(data) && Array.isArray(data.tags)) state.tags = data.tags
         persist()
-        applyTheme()
-        document.documentElement.style.fontSize = state.settings.fontSize + 'px'
-        toast('配置已导入', 'success')
+        toast(`已导入 ${state.diaries.length} 篇日记`, 'success')
+        showView('diary')
       } catch (e) {
-        toast('配置导入失败：文件格式不正确', 'danger')
+        toast('数据导入失败：文件格式不正确', 'danger')
       }
     }
     reader.readAsText(file)
   }
   input.click()
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 /* ================= Modal ================= */
@@ -623,23 +468,31 @@ function toast(msg, type = '') {
 /* ================= Init ================= */
 function init() {
   load()
-  restoreConfigDir()
   applyTheme()
   document.documentElement.style.fontSize = state.settings.fontSize + 'px'
   showView('home')
 }
 
+/* ================= Sidebar ================= */
+const SIDEBAR_COLLAPSED_KEY = 'shiguang-sidebar-collapsed'
+const sidebarCollapsed = ref(false)
+try {
+  sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+} catch (e) { /* ignore */ }
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value)) } catch (e) { /* ignore */ }
+}
+
 export {
   state,
   calAnchor,
-  configDirName,
+  sidebarCollapsed, toggleSidebar,
   modal,
   tagModal,
   toasts,
   // persistence
   persist, load,
-  // draft
-  saveDraft, loadDraft, clearDraft,
   // helpers
   tagCount, computeStats, userAvatarChar,
   // navigation
@@ -654,10 +507,8 @@ export {
   // search / filter
   filterByTag, clearTagFilter, clearFilters,
   // settings
-  setTheme, setFontSize, setAutosave, setReminders, setShowListExcerpt,
-  applyTheme, setUserName, setUserAvatar, exportData, clearAll,
-  // config
-  restoreConfigDir, chooseConfigDir, clearConfigDir, saveConfig, importConfig,
+  setTheme, setFontSize, setShowListExcerpt,
+  applyTheme, setUserName, setUserAvatar, exportData, importData,
   // modal
   openModal, closeModal, confirmModal,
   // toast
